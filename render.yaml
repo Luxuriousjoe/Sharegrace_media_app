@@ -1,0 +1,68 @@
+# render.yaml — Render.com deployment config for Grace Church backend
+
+services:
+  - type: web
+    name: grace-church-api
+    env: node
+    plan: free               # upgrade to starter/standard for production
+    region: oregon            # or frankfurt, singapore, etc.
+    buildCommand: npm install
+    startCommand: npm start
+    healthCheckPath: /health
+    autoDeploy: true
+
+    envVars:
+      # ─── Server ──────────────────────────────────────────────────────────
+      - key: NODE_ENV
+        value: production
+      - key: PORT
+        value: 5000
+
+      # ─── Database (from Aiven dashboard) ────────────────────────────────
+      - key: DB_HOST
+        sync: false          # set manually in Render dashboard
+      - key: DB_PORT
+        value: 3306
+      - key: DB_NAME
+        sync: false
+      - key: DB_USER
+        sync: false
+      - key: DB_PASSWORD
+        sync: false
+      - key: DB_SSL
+        value: "true"
+
+      # ─── JWT ────────────────────────────────────────────────────────────
+      - key: JWT_SECRET
+        generateValue: true
+      - key: JWT_EXPIRES_IN
+        value: 7d
+      - key: JWT_REFRESH_SECRET
+        generateValue: true
+      - key: JWT_REFRESH_EXPIRES_IN
+        value: 30d
+
+      # ─── YouTube OAuth ───────────────────────────────────────────────────
+      - key: YOUTUBE_CLIENT_ID
+        sync: false
+      - key: YOUTUBE_CLIENT_SECRET
+        sync: false
+      - key: YOUTUBE_REDIRECT_URI
+        sync: false
+      - key: YOUTUBE_REFRESH_TOKEN
+        sync: false
+      - key: YOUTUBE_CHANNEL_ID
+        sync: false
+
+      # ─── Telegram ───────────────────────────────────────────────────────
+      - key: TELEGRAM_BOT_TOKEN
+        sync: false
+      - key: TELEGRAM_CHANNEL_ID
+        sync: false
+
+      # ─── CORS ────────────────────────────────────────────────────────────
+      - key: ALLOWED_ORIGINS
+        value: "*"             # restrict to your app domains in production
+
+      - key: MAX_FILE_SIZE_MB
+        value: "500"

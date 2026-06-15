@@ -140,10 +140,12 @@ exports.fetchChannelVideos = async () => {
       `INSERT INTO youtube_channel_videos
          (video_id, title, description, thumbnail_url, published_at, duration, view_count, youtube_url, fetched_at)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, NOW())
-       ON DUPLICATE KEY UPDATE
-         title=VALUES(title), description=VALUES(description),
-         thumbnail_url=VALUES(thumbnail_url), view_count=VALUES(view_count),
-         updated_at=NOW()`,
+       ON CONFLICT (video_id) DO UPDATE SET
+         title = EXCLUDED.title,
+         description = EXCLUDED.description,
+         thumbnail_url = EXCLUDED.thumbnail_url,
+         view_count = EXCLUDED.view_count,
+         updated_at = NOW()`,
       [v.video_id, v.title, v.description, v.thumbnail_url,
        v.published_at, v.duration, v.view_count, v.youtube_url]
     );

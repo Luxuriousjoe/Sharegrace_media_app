@@ -633,7 +633,7 @@ exports.updateUploadStatus = async (req, res, next) => {
          youtube_link     = COALESCE(?, youtube_link),
          youtube_video_id = COALESCE(?, youtube_video_id),
          error_message    = COALESCE(?, error_message),
-         upload_date      = IF(? = 'success', NOW(), upload_date)
+         upload_date      = CASE WHEN ? = 'success' THEN NOW() ELSE upload_date END
        WHERE media_id = ? AND platform = ?`,
       [
         upload_status,
@@ -773,7 +773,8 @@ exports.saveVideo = async (req, res, next) => {
     await db.promise().query(
       `INSERT INTO saved_videos (user_id, media_id, video_id, title, thumbnail_url, youtube_url)
        VALUES (?, ?, ?, ?, ?, ?)
-       ON DUPLICATE KEY UPDATE saved_at = NOW()`,
+       ON CONFLICT (user_id, COALESCE(media_id, -1), COALESCE(video_id, ''))
+       DO UPDATE SET saved_at = NOW()`,
       [
         userId,
         media_id || null,

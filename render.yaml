@@ -1,38 +1,45 @@
-# render.yaml — Render.com deployment config for Grace Church backend
-
 services:
   - type: web
     name: grace-church-api
     env: node
-    plan: free               # upgrade to starter/standard for production
-    region: oregon            # or frankfurt, singapore, etc.
+    plan: free
+    region: oregon
+    rootDir: Backend
     buildCommand: npm install
     startCommand: npm start
     healthCheckPath: /health
     autoDeploy: true
 
     envVars:
-      # ─── Server ──────────────────────────────────────────────────────────
       - key: NODE_ENV
         value: production
       - key: PORT
         value: 5000
 
-      # ─── Database (from Aiven dashboard) ────────────────────────────────
+      # PostgreSQL on Render
       - key: DB_HOST
-        sync: false          # set manually in Render dashboard
+        fromDatabase:
+          name: grace-church-postgres
+          property: host
       - key: DB_PORT
-        value: 3306
+        fromDatabase:
+          name: grace-church-postgres
+          property: port
       - key: DB_NAME
-        sync: false
+        fromDatabase:
+          name: grace-church-postgres
+          property: database
       - key: DB_USER
-        sync: false
+        fromDatabase:
+          name: grace-church-postgres
+          property: user
       - key: DB_PASSWORD
-        sync: false
+        fromDatabase:
+          name: grace-church-postgres
+          property: password
       - key: DB_SSL
         value: "true"
 
-      # ─── JWT ────────────────────────────────────────────────────────────
       - key: JWT_SECRET
         generateValue: true
       - key: JWT_EXPIRES_IN
@@ -42,7 +49,6 @@ services:
       - key: JWT_REFRESH_EXPIRES_IN
         value: 30d
 
-      # ─── YouTube OAuth ───────────────────────────────────────────────────
       - key: YOUTUBE_CLIENT_ID
         sync: false
       - key: YOUTUBE_CLIENT_SECRET
@@ -54,15 +60,23 @@ services:
       - key: YOUTUBE_CHANNEL_ID
         sync: false
 
-      # ─── Telegram ───────────────────────────────────────────────────────
       - key: TELEGRAM_BOT_TOKEN
         sync: false
       - key: TELEGRAM_CHANNEL_ID
         sync: false
+      - key: TELEGRAM_HOME_BANNER_CHANNEL_ID
+        sync: false
+      - key: TELEGRAM_EVENT_AD_CHANNEL_ID
+        sync: false
 
-      # ─── CORS ────────────────────────────────────────────────────────────
       - key: ALLOWED_ORIGINS
-        value: "*"             # restrict to your app domains in production
+        value: "*"
 
       - key: MAX_FILE_SIZE_MB
         value: "500"
+
+databases:
+  - name: grace-church-postgres
+    databaseName: grace_church_media
+    user: grace_church_media_user
+    plan: free

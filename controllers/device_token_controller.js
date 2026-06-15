@@ -19,9 +19,9 @@ exports.register = async (req, res, next) => {
     await db.promise().query(
       `INSERT INTO device_tokens (user_id, device_token, platform, is_active)
        VALUES (?, ?, ?, 1)
-       ON DUPLICATE KEY UPDATE
-         user_id = VALUES(user_id),
-         platform = VALUES(platform),
+       ON CONFLICT (device_token) DO UPDATE SET
+         user_id = EXCLUDED.user_id,
+         platform = EXCLUDED.platform,
          is_active = 1,
          updated_at = CURRENT_TIMESTAMP`,
       [req.user.id, token, platform]

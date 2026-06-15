@@ -6,6 +6,7 @@ const deviceTokenController = require('../controllers/device_token_controller');
 const { authMiddleware } = require('../middleware/auth_middleware');
 
 router.post('/login', authController.login);
+router.post('/register', authController.register);
 router.post('/refresh', authController.refreshToken);
 router.post('/logout', authController.logout);
 router.get('/me', authMiddleware, authController.getMe);

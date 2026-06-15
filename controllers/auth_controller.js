@@ -131,7 +131,7 @@ exports.login = async (req, res, next) => {
 
     const cleanEmail = String(email).toLowerCase().trim();
     const [rows] = await db.promise().query(
-      'SELECT * FROM users WHERE email = ? AND is_active = 1',
+      'SELECT * FROM users WHERE email = ? AND is_active = TRUE',
       [cleanEmail],
     );
 
@@ -202,6 +202,93 @@ exports.login = async (req, res, next) => {
     });
   } catch (error) {
     logger.error(`LOGIN_ERROR | ${error.message} | email:${email} | ip:${ip}`);
+    next(error);
+  }
+};
+
+exports.register = async (req, res, next) => {
+  const { name, email, password } = req.body;
+  const ip = req.ip || req.connection?.remoteAddress || 'unknown';
+
+  try {
+    if (!name || !email || !password) {
+      return res.status(400).json({
+        success: false,
+        message: 'Name, email, and password are required',
+      });
+    }
+
+    if (String(password).length < 6) {
+      return res.status(400).json({
+        success: false,
+        message: 'Password must be at least 6 characters',
+      });
+    }
+
+    const cleanName = String(name).trim();
+    const cleanEmail = String(email).toLowerCase().trim();
+
+    const [existingUsers] = await db.promise().query(
+      'SELECT id FROM users WHERE email = ? LIMIT 1',
+      [cleanEmail],
+    );
+
+    if (existingUsers.length) {
+      return res.status(409).json({
+        success: false,
+        message: 'An account with that email already exists',
+      });
+    }
+
+    const [insertResult] = await db.promise().query(
+      'INSERT INTO users (name, email, role, password_hash, is_active) VALUES (?, ?, ?, ?, ?)',
+      [cleanName, cleanEmail, 'user', password, true],
+    );
+
+    const [rows] = await db.promise().query(
+      'SELECT * FROM users WHERE id = ? LIMIT 1',
+      [insertResult.insertId],
+    );
+
+    if (!rows.length) {
+      return res.status(500).json({
+        success: false,
+        message: 'Account created but profile could not be loaded',
+      });
+    }
+
+    const user = rows[0];
+    const { accessToken, refreshToken } = generateTokens(user);
+
+    const expiresAt = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000);
+    await db.promise().query(
+      'INSERT INTO refresh_tokens (user_id, token, expires_at) VALUES (?, ?, ?)',
+      [user.id, refreshToken, expiresAt],
+    );
+
+    try {
+      await updateLoginMetadata(user.id, ip);
+      await db.promise().query(
+        'INSERT INTO logs (action, user_id, details, ip_addr) VALUES (?, ?, ?, ?)',
+        ['USER_REGISTER', user.id, `Account created for ${user.email}`, ip],
+      );
+    } catch (logError) {
+      logger.warn(`AUTH | Could not write register log: ${logError.message}`);
+    }
+
+    logger.auth('REGISTER_SUCCESS', user.email, user.role, ip);
+
+    return res.status(201).json({
+      success: true,
+      message: `Welcome to the family, ${user.name}!`,
+      data: {
+        accessToken,
+        refreshToken,
+        user: await mapUserPayload(user),
+      },
+    });
+  } catch (error) {
+    logger.error(`REGISTER_ERROR | ${error.message} | email:${email} | ip:${ip}`);
     next(error);
   }
 };

@@ -54,6 +54,8 @@ const mapUserPayload = async (user) => {
     name: user.name,
     email: user.email,
     role: user.role,
+    family: user.family || 'None',
+    department: user.department || 'None',
     avatar_url: user.avatar_url || null,
     can_upload_media: user.can_upload_media,
     can_manage_users: user.can_manage_users,
@@ -81,6 +83,13 @@ const buildProfileSelect = async () => {
     'can_manage_timely_reflections',
     'can_manage_home_banners',
   ];
+
+  if (await hasUserColumn('family')) {
+    columns.push('family');
+  }
+  if (await hasUserColumn('department')) {
+    columns.push('department');
+  }
 
   if (await hasUserColumn('onboarding_completed')) {
     columns.push('onboarding_completed');
@@ -207,14 +216,16 @@ exports.login = async (req, res, next) => {
 };
 
 exports.register = async (req, res, next) => {
-  const { name, email, password } = req.body;
+  const { fullName, name, email, password, family, department } = req.body;
   const ip = req.ip || req.connection?.remoteAddress || 'unknown';
 
   try {
-    if (!name || !email || !password) {
+    const incomingName = fullName || name;
+
+    if (!incomingName || !email || !password) {
       return res.status(400).json({
         success: false,
-        message: 'Name, email, and password are required',
+        message: 'Full name, email, and password are required',
       });
     }
 
@@ -225,8 +236,10 @@ exports.register = async (req, res, next) => {
       });
     }
 
-    const cleanName = String(name).trim();
+    const cleanName = String(incomingName).trim();
     const cleanEmail = String(email).toLowerCase().trim();
+    const cleanFamily = family ? String(family).trim() : 'None';
+    const cleanDepartment = department ? String(department).trim() : 'None';
 
     const [existingUsers] = await db.promise().query(
       'SELECT id FROM users WHERE email = ? LIMIT 1',
@@ -240,9 +253,28 @@ exports.register = async (req, res, next) => {
       });
     }
 
+    const canUseFamily = await hasUserColumn('family');
+    const canUseDepartment = await hasUserColumn('department');
+
+    const columns = ['name', 'email', 'role', 'password_hash', 'is_active'];
+    const placeholders = ['?', '?', '?', '?', '?'];
+    const values = [cleanName, cleanEmail, 'user', password, true];
+
+    if (canUseFamily) {
+      columns.push('family');
+      placeholders.push('?');
+      values.push(cleanFamily);
+    }
+
+    if (canUseDepartment) {
+      columns.push('department');
+      placeholders.push('?');
+      values.push(cleanDepartment);
+    }
+
     const [insertResult] = await db.promise().query(
-      'INSERT INTO users (name, email, role, password_hash, is_active) VALUES (?, ?, ?, ?, ?)',
-      [cleanName, cleanEmail, 'user', password, true],
+      `INSERT INTO users (${columns.join(', ')}) VALUES (${placeholders.join(', ')})`,
+      values,
     );
 
     const [rows] = await db.promise().query(

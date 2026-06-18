@@ -68,6 +68,9 @@ logger.startup(`TELEGRAM  : ${!!process.env.TELEGRAM_BOT_TOKEN}`);
 logger.startup(`YOUTUBE   : ${!!process.env.YOUTUBE_CLIENT_ID}`);
 logger.startup('='.repeat(60));
 
+// Render sits behind a proxy, so Express must trust it for rate limiting and IP detection.
+app.set('trust proxy', 1);
+
 app.use(helmet());
 
 const allowedOrigins = (process.env.ALLOWED_ORIGINS || '*')

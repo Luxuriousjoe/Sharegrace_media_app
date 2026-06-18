@@ -64,14 +64,14 @@ exports.getAll = async (req, res, next) => {
       `UPDATE event_ads
        SET is_active = 0
        WHERE is_active = 1
-         AND event_date < CURDATE()`
+         AND event_date < CURRENT_DATE`
     );
 
     const [rows] = await db.promise().query(
       `SELECT id, image_path, ad_label, headline, subheadline, event_date, display_order, is_active, created_at
        FROM event_ads
        WHERE is_active = 1
-         AND event_date >= CURDATE()
+         AND event_date >= CURRENT_DATE
        ORDER BY event_date ASC, display_order ASC, created_at DESC`
     );
 
@@ -93,7 +93,7 @@ exports.getAdminList = async (req, res, next) => {
       `UPDATE event_ads
        SET is_active = 0
        WHERE is_active = 1
-         AND event_date < CURDATE()`
+         AND event_date < CURRENT_DATE`
     );
 
     const [rows] = await db.promise().query(

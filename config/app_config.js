@@ -49,6 +49,30 @@ module.exports = {
   googleDrive: {
     enabled: (process.env.GOOGLE_DRIVE_ENABLED || '').toLowerCase() === 'true',
     folderId: process.env.GOOGLE_DRIVE_FOLDER_ID || '',
+    mediaFolderId:
+      process.env.GOOGLE_DRIVE_MEDIA_FOLDER_ID ||
+      process.env.GOOGLE_DRIVE_FOLDER_ID ||
+      '',
+    videoFolderId:
+      process.env.GOOGLE_DRIVE_VIDEO_FOLDER_ID ||
+      process.env.GOOGLE_DRIVE_MEDIA_FOLDER_ID ||
+      process.env.GOOGLE_DRIVE_FOLDER_ID ||
+      '',
+    photoFolderId:
+      process.env.GOOGLE_DRIVE_PHOTO_FOLDER_ID ||
+      process.env.GOOGLE_DRIVE_MEDIA_FOLDER_ID ||
+      process.env.GOOGLE_DRIVE_FOLDER_ID ||
+      '',
+    audioFolderId:
+      process.env.GOOGLE_DRIVE_AUDIO_FOLDER_ID ||
+      process.env.GOOGLE_DRIVE_MEDIA_FOLDER_ID ||
+      process.env.GOOGLE_DRIVE_FOLDER_ID ||
+      '',
+    thumbnailFolderId:
+      process.env.GOOGLE_DRIVE_THUMBNAIL_FOLDER_ID ||
+      process.env.GOOGLE_DRIVE_MEDIA_FOLDER_ID ||
+      process.env.GOOGLE_DRIVE_FOLDER_ID ||
+      '',
     serviceAccountJson: process.env.GOOGLE_DRIVE_SERVICE_ACCOUNT_JSON || '',
     serviceAccountPath: process.env.GOOGLE_DRIVE_SERVICE_ACCOUNT_PATH || '',
   },

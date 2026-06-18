@@ -1,4 +1,5 @@
 const jwt = require('jsonwebtoken');
+const db = require('../config/db_config');
 const config = require('../config/app_config');
 const logger = require('../utils/logger');
 
@@ -50,4 +51,46 @@ const timelyReflectionAdminMiddleware = (req, res, next) => {
   });
 };
 
-module.exports = { authMiddleware, adminMiddleware, timelyReflectionAdminMiddleware };
+function isTruthyPermission(value) {
+  if (value === true || value === 1) return true;
+  const normalized = String(value || '').toLowerCase().trim();
+  return normalized === 'true' || normalized === '1' || normalized === 'yes';
+}
+
+const mediaUploadMiddleware = (req, res, next) => {
+  authMiddleware(req, res, async () => {
+    try {
+      const role = req.user.role;
+      if (role === 'main_admin' || role === 'admin') {
+        logger.info(`UPLOAD_GUARD | Admin upload granted to ${req.user.email}`);
+        return next();
+      }
+
+      const [rows] = await db.promise().query(
+        'SELECT can_upload_media FROM users WHERE id = ? AND is_active = TRUE',
+        [req.user.id],
+      );
+
+      if (rows.length && isTruthyPermission(rows[0].can_upload_media)) {
+        logger.info(`UPLOAD_GUARD | Upload permission granted to ${req.user.email}`);
+        return next();
+      }
+
+      logger.warn(`UPLOAD_GUARD | Access denied for ${req.user.email} on ${req.method} ${req.originalUrl}`);
+      return res.status(403).json({
+        success: false,
+        message: 'Upload access is restricted to admins and approved media users',
+      });
+    } catch (error) {
+      logger.error(`UPLOAD_GUARD_ERROR | ${error.message}`);
+      next(error);
+    }
+  });
+};
+
+module.exports = {
+  authMiddleware,
+  adminMiddleware,
+  timelyReflectionAdminMiddleware,
+  mediaUploadMiddleware,
+};

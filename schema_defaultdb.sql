@@ -30,10 +30,88 @@ ALTER TABLE IF EXISTS users
 ALTER TABLE IF EXISTS users
   ADD COLUMN IF NOT EXISTS department VARCHAR(120) NOT NULL DEFAULT 'None';
 
+ALTER TABLE IF EXISTS users
+  ADD COLUMN IF NOT EXISTS is_active BOOLEAN NOT NULL DEFAULT TRUE;
+
+ALTER TABLE IF EXISTS users
+  ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ NOT NULL DEFAULT NOW();
+
+ALTER TABLE IF EXISTS users
+  ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW();
+
+ALTER TABLE IF EXISTS users
+  ADD COLUMN IF NOT EXISTS can_upload_media BOOLEAN NOT NULL DEFAULT FALSE;
+
+ALTER TABLE IF EXISTS users
+  ADD COLUMN IF NOT EXISTS can_manage_users BOOLEAN NOT NULL DEFAULT FALSE;
+
+ALTER TABLE IF EXISTS users
+  ADD COLUMN IF NOT EXISTS can_manage_timely_reflections BOOLEAN NOT NULL DEFAULT FALSE;
+
+ALTER TABLE IF EXISTS users
+  ADD COLUMN IF NOT EXISTS can_manage_home_banners BOOLEAN NOT NULL DEFAULT FALSE;
+
+ALTER TABLE IF EXISTS users
+  ADD COLUMN IF NOT EXISTS onboarding_completed BOOLEAN NOT NULL DEFAULT FALSE;
+
+ALTER TABLE IF EXISTS users
+  ADD COLUMN IF NOT EXISTS onboarding_completed_at TIMESTAMPTZ;
+
+INSERT INTO users (
+  name,
+  email,
+  role,
+  family,
+  department,
+  password_hash,
+  is_active,
+  can_upload_media,
+  can_manage_users,
+  can_manage_timely_reflections,
+  can_manage_home_banners,
+  onboarding_completed,
+  onboarding_completed_at
+)
+VALUES (
+  'Share Grace Admin',
+  'admin@sharegrace.com',
+  'admin',
+  'None',
+  'None',
+  'admin1233',
+  TRUE,
+  TRUE,
+  TRUE,
+  TRUE,
+  TRUE,
+  TRUE,
+  NOW()
+)
+ON CONFLICT (email) DO UPDATE SET
+  name = EXCLUDED.name,
+  role = EXCLUDED.role,
+  family = EXCLUDED.family,
+  department = EXCLUDED.department,
+  password_hash = EXCLUDED.password_hash,
+  is_active = TRUE,
+  can_upload_media = TRUE,
+  can_manage_users = TRUE,
+  can_manage_timely_reflections = TRUE,
+  can_manage_home_banners = TRUE,
+  onboarding_completed = TRUE,
+  onboarding_completed_at = COALESCE(users.onboarding_completed_at, NOW()),
+  updated_at = NOW();
+
 CREATE TABLE IF NOT EXISTS media (
   id BIGSERIAL PRIMARY KEY,
   type VARCHAR(20) NOT NULL CHECK (type IN ('video', 'photo', 'audio')),
   file_path TEXT,
+  storage_provider VARCHAR(40) NOT NULL DEFAULT 'local',
+  drive_file_id TEXT,
+  drive_web_view_link TEXT,
+  drive_download_url TEXT,
+  thumbnail_drive_file_id TEXT,
+  preview_drive_file_id TEXT,
   title VARCHAR(200),
   thumbnail_url TEXT,
   status VARCHAR(20) NOT NULL DEFAULT 'pending'
@@ -49,6 +127,24 @@ CREATE TABLE IF NOT EXISTS media (
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+
+ALTER TABLE IF EXISTS media
+  ADD COLUMN IF NOT EXISTS storage_provider VARCHAR(40) NOT NULL DEFAULT 'local';
+
+ALTER TABLE IF EXISTS media
+  ADD COLUMN IF NOT EXISTS drive_file_id TEXT;
+
+ALTER TABLE IF EXISTS media
+  ADD COLUMN IF NOT EXISTS drive_web_view_link TEXT;
+
+ALTER TABLE IF EXISTS media
+  ADD COLUMN IF NOT EXISTS drive_download_url TEXT;
+
+ALTER TABLE IF EXISTS media
+  ADD COLUMN IF NOT EXISTS thumbnail_drive_file_id TEXT;
+
+ALTER TABLE IF EXISTS media
+  ADD COLUMN IF NOT EXISTS preview_drive_file_id TEXT;
 
 CREATE TABLE IF NOT EXISTS media_metadata (
   id BIGSERIAL PRIMARY KEY,

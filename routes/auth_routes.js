@@ -10,6 +10,7 @@ router.post('/register', authController.register);
 router.post('/refresh', authController.refreshToken);
 router.post('/logout', authController.logout);
 router.get('/me', authMiddleware, authController.getMe);
+router.delete('/me', authMiddleware, authController.deleteAccount);
 router.post('/onboarding/complete', authMiddleware, authController.completeOnboarding);
 router.put('/change-password', authMiddleware, authController.changePassword);
 router.post('/device-token', authMiddleware, deviceTokenController.register);

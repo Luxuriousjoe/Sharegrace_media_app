@@ -442,6 +442,40 @@ exports.getMe = async (req, res, next) => {
   }
 };
 
+exports.deleteAccount = async (req, res, next) => {
+  try {
+    const userId = req.user.id;
+    const email = req.user.email || 'unknown';
+
+    await db.promise().query('DELETE FROM refresh_tokens WHERE user_id = ?', [
+      userId,
+    ]);
+    await db.promise().query('DELETE FROM device_tokens WHERE user_id = ?', [
+      userId,
+    ]);
+
+    const [deleteResult] = await db.promise().query(
+      'DELETE FROM users WHERE id = ?',
+      [userId],
+    );
+
+    if (!deleteResult.affectedRows) {
+      return res
+        .status(404)
+        .json({ success: false, message: 'User not found' });
+    }
+
+    logger.auth('ACCOUNT_DELETED', email, req.user.role || '?', req.ip);
+    return res.json({
+      success: true,
+      message: 'Account deleted successfully',
+    });
+  } catch (error) {
+    logger.error(`DELETE_ACCOUNT_ERROR | ${error.message}`);
+    next(error);
+  }
+};
+
 exports.completeOnboarding = async (req, res, next) => {
   try {
     const canTrackOnboarding = await hasUserColumn('onboarding_completed');

@@ -677,7 +677,7 @@ exports.createMedia = async (req, res, next) => {
       [typeColumn, type],
       ['title', title || null],
       ['file_path', serverFilePath],
-      ['status', 'pending'],
+      ['status', uploadPlatforms.length ? 'pending' : 'uploaded'],
       ['uploaded_by', req.user.id],
     ];
 

@@ -73,6 +73,33 @@ function publicDownloadUrl(fileId) {
   return `https://drive.google.com/uc?export=download&id=${fileId}`;
 }
 
+function parseRangeHeader(rangeHeader, size) {
+  if (!rangeHeader || !size) return null;
+
+  const match = String(rangeHeader).match(/^bytes=(\d*)-(\d*)$/);
+  if (!match) return null;
+
+  const startText = match[1];
+  const endText = match[2];
+  const start = startText ? Number.parseInt(startText, 10) : 0;
+  const end = endText ? Number.parseInt(endText, 10) : size - 1;
+
+  if (
+    Number.isNaN(start) ||
+    Number.isNaN(end) ||
+    start < 0 ||
+    end < start ||
+    start >= size
+  ) {
+    return { invalid: true };
+  }
+
+  return {
+    start,
+    end: Math.min(end, size - 1),
+  };
+}
+
 async function uploadAppReleaseFile({ localPath, fileName, mimeType = 'application/vnd.android.package-archive' }) {
   return uploadFileToDrive({
     localPath,
@@ -142,7 +169,13 @@ async function uploadFileToDrive({ localPath, fileName, mimeType = 'application/
   };
 }
 
-async function streamFileToResponse({ fileId, res, wantsDownload = true, fileName = 'app-release.apk' }) {
+async function streamFileToResponse({
+  fileId,
+  res,
+  wantsDownload = true,
+  fileName = 'app-release.apk',
+  rangeHeader,
+}) {
   const drive = await getDriveClient();
 
   let metadata;
@@ -157,21 +190,42 @@ async function streamFileToResponse({ fileId, res, wantsDownload = true, fileNam
     metadata = {};
   }
 
+  const resolvedName = metadata?.name || fileName;
+  const mimeType = metadata?.mimeType || 'application/octet-stream';
+  const size = metadata?.size ? Number(metadata.size) : null;
+  const range = parseRangeHeader(rangeHeader, size);
+
+  if (range?.invalid) {
+    res.status(416);
+    if (size) res.setHeader('Content-Range', `bytes */${size}`);
+    return res.end();
+  }
+
+  const requestOptions = { responseType: 'stream' };
+  if (range) {
+    requestOptions.headers = {
+      Range: `bytes=${range.start}-${range.end}`,
+    };
+  }
+
   const response = await drive.files.get(
     {
       fileId,
       alt: 'media',
       supportsAllDrives: true,
     },
-    { responseType: 'stream' }
+    requestOptions
   );
 
-  const resolvedName = metadata?.name || fileName;
-  const mimeType = metadata?.mimeType || 'application/octet-stream';
-  const size = metadata?.size || null;
-
   res.setHeader('Content-Type', mimeType);
-  if (size) res.setHeader('Content-Length', size);
+  res.setHeader('Accept-Ranges', 'bytes');
+  if (range && size) {
+    res.status(206);
+    res.setHeader('Content-Range', `bytes ${range.start}-${range.end}/${size}`);
+    res.setHeader('Content-Length', range.end - range.start + 1);
+  } else if (size) {
+    res.setHeader('Content-Length', size);
+  }
   res.setHeader(
     'Content-Disposition',
     `${wantsDownload ? 'attachment' : 'inline'}; filename="${resolvedName}"`

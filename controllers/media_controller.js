@@ -3,6 +3,7 @@ const path = require('path');
 const db = require('../config/db_config');
 const config = require('../config/app_config');
 const telegramService = require('../services/telegram_service');
+const googleDriveService = require('../services/google_drive_service');
 const photoPreviewService = require('../services/photo_preview_service');
 const logger = require('../utils/logger');
 
@@ -125,6 +126,47 @@ function streamLocalFile({ filePath, wantsDownload, res }) {
   );
 
   return { fileSize, fileName };
+}
+
+function getMimeType(filePath, fallback = 'application/octet-stream') {
+  const extension = path.extname(filePath || '').toLowerCase();
+  return CONTENT_TYPES[extension] || fallback;
+}
+
+function cleanDriveFileName(value) {
+  return String(value || 'share-grace-media')
+    .replace(/[\\/:*?"<>|]/g, '-')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, 120) || 'share-grace-media';
+}
+
+async function uploadAssetToDrive({ file, localPath, title, mediaType, label }) {
+  if (!googleDriveService.isConfigured()) {
+    return null;
+  }
+
+  const sourcePath = localPath || file?.path;
+  if (!sourcePath || !fs.existsSync(sourcePath)) {
+    throw new Error(`Google Drive upload source missing for ${label || mediaType}`);
+  }
+
+  const ext = path.extname(file?.originalname || sourcePath);
+  const baseTitle = cleanDriveFileName(title || file?.originalname || label || mediaType);
+  const fileName = `${Date.now()}-${baseTitle}${ext}`;
+  const mimeType = file?.mimetype || getMimeType(sourcePath);
+
+  const uploaded = await googleDriveService.uploadMediaFile({
+    localPath: sourcePath,
+    fileName,
+    mimeType,
+    mediaType,
+  });
+
+  logger.info(
+    `DRIVE | Uploaded ${label || mediaType} to ${mediaType} folder | file:${uploaded.fileId}`,
+  );
+  return uploaded;
 }
 
 // ─── GET ALL MEDIA ────────────────────────────────────────────
@@ -290,6 +332,15 @@ exports.streamPhotoPreview = async (req, res, next) => {
     const previewTelegramFilePathSelect = mediaColumns.has('preview_telegram_file_path')
       ? 'm.preview_telegram_file_path'
       : 'NULL AS preview_telegram_file_path';
+    const previewDriveFileIdSelect = mediaColumns.has('preview_drive_file_id')
+      ? 'm.preview_drive_file_id'
+      : 'NULL AS preview_drive_file_id';
+    const thumbnailDriveFileIdSelect = mediaColumns.has('thumbnail_drive_file_id')
+      ? 'm.thumbnail_drive_file_id'
+      : 'NULL AS thumbnail_drive_file_id';
+    const driveFileIdSelect = mediaColumns.has('drive_file_id')
+      ? 'm.drive_file_id'
+      : 'NULL AS drive_file_id';
 
     const [rows] = await db.promise().query(
       `SELECT
@@ -300,7 +351,10 @@ exports.streamPhotoPreview = async (req, res, next) => {
          ${previewFilePathSelect},
          ${previewTelegramMsgIdSelect},
          ${previewTelegramFileIdSelect},
-         ${previewTelegramFilePathSelect}
+         ${previewTelegramFilePathSelect},
+         ${previewDriveFileIdSelect},
+         ${thumbnailDriveFileIdSelect},
+         ${driveFileIdSelect}
        FROM media m
        WHERE m.id = ?`,
       [id]
@@ -319,6 +373,18 @@ exports.streamPhotoPreview = async (req, res, next) => {
       });
       res.setHeader('Content-Length', fileSize);
       fs.createReadStream(media.preview_file_path).pipe(res);
+      return;
+    }
+
+    const drivePreviewFileId =
+      media.preview_drive_file_id || media.thumbnail_drive_file_id;
+    if (drivePreviewFileId && googleDriveService.isConfigured()) {
+      await googleDriveService.streamFileToResponse({
+        fileId: drivePreviewFileId,
+        res,
+        wantsDownload,
+        fileName: `${media.title || `preview-${media.id}`}.jpg`,
+      });
       return;
     }
 
@@ -349,6 +415,16 @@ exports.streamPhotoPreview = async (req, res, next) => {
       return;
     }
 
+    if (media.type === 'photo' && media.drive_file_id && googleDriveService.isConfigured()) {
+      await googleDriveService.streamFileToResponse({
+        fileId: media.drive_file_id,
+        res,
+        wantsDownload,
+        fileName: `${media.title || `photo-${media.id}`}.jpg`,
+      });
+      return;
+    }
+
     return res.status(404).json({
       success: false,
       message: 'Media thumbnail not available',
@@ -364,6 +440,7 @@ exports.streamMediaFile = async (req, res, next) => {
   const wantsDownload = req.query.download === '1';
 
   try {
+    const mediaColumns = await getMediaColumns();
     const uploadColumns = await getUploadsColumns();
     const tgFileIdSelect = uploadColumns.has('telegram_file_id')
       ? 'up_tg.telegram_file_id'
@@ -371,6 +448,15 @@ exports.streamMediaFile = async (req, res, next) => {
     const tgFilePathSelect = uploadColumns.has('telegram_file_path')
       ? 'up_tg.telegram_file_path'
       : 'NULL AS telegram_file_path';
+    const storageProviderSelect = mediaColumns.has('storage_provider')
+      ? 'm.storage_provider'
+      : "'local' AS storage_provider";
+    const driveFileIdSelect = mediaColumns.has('drive_file_id')
+      ? 'm.drive_file_id'
+      : 'NULL AS drive_file_id';
+    const driveDownloadUrlSelect = mediaColumns.has('drive_download_url')
+      ? 'm.drive_download_url'
+      : 'NULL AS drive_download_url';
 
     const [rows] = await db.promise().query(
       `SELECT
@@ -378,6 +464,9 @@ exports.streamMediaFile = async (req, res, next) => {
          m.type,
          m.file_path,
          m.title,
+         ${storageProviderSelect},
+         ${driveFileIdSelect},
+         ${driveDownloadUrlSelect},
          up_tg.telegram_msg_id,
          ${tgFileIdSelect},
          ${tgFilePathSelect},
@@ -428,6 +517,21 @@ exports.streamMediaFile = async (req, res, next) => {
 
       res.setHeader('Content-Length', fileSize);
       fs.createReadStream(media.file_path).pipe(res);
+      return;
+    }
+
+    if (media.drive_file_id && googleDriveService.isConfigured()) {
+      const fallbackName = media.title
+        ? `${media.title}${path.extname(media.file_path || '') || ''}`
+        : `media-${media.id}`;
+
+      await googleDriveService.streamFileToResponse({
+        fileId: media.drive_file_id,
+        res,
+        wantsDownload,
+        fileName: fallbackName,
+        rangeHeader: req.headers.range,
+      });
       return;
     }
 
@@ -503,48 +607,99 @@ exports.createMedia = async (req, res, next) => {
     const normalisedPlatforms = [...new Set(
       requestedPlatforms
         .map((platform) => String(platform).trim().toLowerCase())
-        .filter((platform) => platform === 'telegram' || platform === 'youtube')
+        .filter((platform) =>
+          platform === 'telegram' ||
+          platform === 'youtube' ||
+          platform === 'drive'
+        )
     )];
 
+    const hasExplicitDestinations = normalisedPlatforms.length > 0;
     let uploadPlatforms;
-    if (type === 'photo' || type === 'audio') {
+    if (hasExplicitDestinations) {
+      uploadPlatforms = normalisedPlatforms.filter(
+        (platform) => platform === 'telegram' || platform === 'youtube'
+      );
+      if (type !== 'video') {
+        uploadPlatforms = uploadPlatforms.filter((platform) => platform === 'telegram');
+      }
+    } else if (type === 'photo' || type === 'audio') {
       uploadPlatforms = ['telegram'];
     } else {
-      uploadPlatforms = normalisedPlatforms.length
-        ? normalisedPlatforms
-        : ['telegram', 'youtube'];
+      uploadPlatforms = ['telegram', 'youtube'];
     }
 
-    if (!uploadPlatforms.length) {
+    const uploadToDrive = parseBoolean(
+      metadata.upload_to_drive,
+      hasExplicitDestinations
+        ? normalisedPlatforms.includes('drive')
+        : googleDriveService.isConfigured()
+    );
+
+    if (!uploadPlatforms.length && !uploadToDrive) {
       return res.status(400).json({
         success: false,
         message: 'Select at least one platform for this media upload',
       });
     }
 
+    if (uploadToDrive && !googleDriveService.isConfigured()) {
+      return res.status(400).json({
+        success: false,
+        message: 'Google Drive is not configured on the backend yet',
+      });
+    }
+
     const metadataColumns = await getMediaMetadataColumns();
     const mediaColumns = await getMediaColumns();
     const contentCategory = explicitCategory || metadata.content_category || null;
-    const uploadToTelegram = type === 'photo' || type === 'audio'
-      ? true
-      : parseBoolean(metadata.upload_to_telegram, uploadPlatforms.includes('telegram'));
-    const uploadToYouTube = type === 'video'
-      ? parseBoolean(metadata.upload_to_youtube, uploadPlatforms.includes('youtube'))
-      : false;
+    const uploadToTelegram = uploadPlatforms.includes('telegram');
+    const uploadToYouTube = type === 'video' && uploadPlatforms.includes('youtube');
     const youtubeScheduleAt = type === 'video'
       ? (explicitScheduleAt || metadata.youtube_schedule_at || null)
       : null;
 
     const serverFilePath = mediaFile.path;
+    const mainDriveUpload = uploadToDrive
+      ? await uploadAssetToDrive({
+          file: mediaFile,
+          title: title || metadata.event_name || type,
+          mediaType: type,
+          label: `${type} file`,
+        })
+      : null;
 
     const [columnCheck] = await db.promise().query("SHOW COLUMNS FROM media LIKE 'type'");
     const hasTypeColumn = Array.isArray(columnCheck) && columnCheck.length > 0;
     const typeColumn = hasTypeColumn ? 'type' : 'media_type';
 
+    const mediaFields = [
+      [typeColumn, type],
+      ['title', title || null],
+      ['file_path', serverFilePath],
+      ['status', 'pending'],
+      ['uploaded_by', req.user.id],
+    ];
+
+    if (mainDriveUpload) {
+      if (mediaColumns.has('storage_provider')) {
+        mediaFields.push(['storage_provider', 'google_drive']);
+      }
+      if (mediaColumns.has('drive_file_id')) {
+        mediaFields.push(['drive_file_id', mainDriveUpload.fileId]);
+      }
+      if (mediaColumns.has('drive_web_view_link')) {
+        mediaFields.push(['drive_web_view_link', mainDriveUpload.webViewLink]);
+      }
+      if (mediaColumns.has('drive_download_url')) {
+        mediaFields.push(['drive_download_url', mainDriveUpload.downloadUrl]);
+      }
+    }
+
     const [result] = await db.promise().query(
-      `INSERT INTO media (${typeColumn}, title, file_path, status, uploaded_by)
-       VALUES (?, ?, ?, 'pending', ?)`,
-      [type, title || null, serverFilePath, req.user.id]
+      `INSERT INTO media (${mediaFields.map(([column]) => column).join(', ')})
+       VALUES (${mediaFields.map(() => '?').join(', ')})`,
+      mediaFields.map(([, value]) => value)
     );
 
     const mediaId = result.insertId;
@@ -557,10 +712,26 @@ exports.createMedia = async (req, res, next) => {
         });
         const setParts = ['preview_file_path = ?'];
         const setParams = [previewPath];
+        let previewDriveUpload = null;
+        try {
+          previewDriveUpload = await uploadAssetToDrive({
+            localPath: previewPath,
+            title: `${title || metadata.event_name || 'photo'} preview`,
+            mediaType: 'thumbnail',
+            label: 'photo preview',
+          });
+        } catch (driveError) {
+          logger.warn(`DRIVE | photo preview upload failed for media:${mediaId} | ${driveError.message}`);
+        }
 
         if (mediaColumns.has('thumbnail_url')) {
           setParts.push('thumbnail_url = ?');
           setParams.push(buildPreviewUrl(mediaId));
+        }
+
+        if (previewDriveUpload && mediaColumns.has('preview_drive_file_id')) {
+          setParts.push('preview_drive_file_id = ?');
+          setParams.push(previewDriveUpload.fileId);
         }
 
         if (mediaColumns.has('preview_upload_status')) {
@@ -585,6 +756,27 @@ exports.createMedia = async (req, res, next) => {
     if (canSetThumbnailPreview) {
       const setParts = ['preview_file_path = ?', 'thumbnail_url = ?'];
       const setParams = [thumbnailFile.path, buildPreviewUrl(mediaId)];
+      let thumbnailDriveUpload = null;
+      try {
+        thumbnailDriveUpload = await uploadAssetToDrive({
+          file: thumbnailFile,
+          title: `${title || metadata.event_name || type} thumbnail`,
+          mediaType: 'thumbnail',
+          label: 'thumbnail',
+        });
+      } catch (driveError) {
+        logger.warn(`DRIVE | thumbnail upload failed for media:${mediaId} | ${driveError.message}`);
+      }
+
+      if (thumbnailDriveUpload && mediaColumns.has('thumbnail_drive_file_id')) {
+        setParts.push('thumbnail_drive_file_id = ?');
+        setParams.push(thumbnailDriveUpload.fileId);
+      }
+
+      if (thumbnailDriveUpload && mediaColumns.has('preview_drive_file_id')) {
+        setParts.push('preview_drive_file_id = ?');
+        setParams.push(thumbnailDriveUpload.fileId);
+      }
 
       if (mediaColumns.has('preview_upload_status')) {
         setParts.push("preview_upload_status = 'success'");
@@ -655,22 +847,26 @@ exports.createMedia = async (req, res, next) => {
     );
 
     const uploadRows = uploadPlatforms.map((platform) => [mediaId, platform, 'pending']);
-    await db.promise().query(
-      `INSERT INTO uploads (media_id, platform, upload_status)
-       VALUES ?`,
-      [uploadRows]
-    );
+    if (uploadRows.length) {
+      await db.promise().query(
+        `INSERT INTO uploads (media_id, platform, upload_status)
+         VALUES ?`,
+        [uploadRows]
+      );
+    }
 
     await db.promise().query(
       'INSERT INTO logs (action, user_id, details) VALUES (?, ?, ?)',
       ['MEDIA_CREATED', req.user.id, `${type} media created: ${title || 'Untitled'}`]
     );
     const uploadController = require('./upload_controller');
-    try {
-      await uploadController.triggerUploadByMediaId(mediaId);
-      logger.info(`MEDIA | auto-triggered upload for media:${mediaId}`);
-    } catch (err) {
-      logger.error(`MEDIA | auto-trigger failed for media:${mediaId} | ${err.message}`);
+    if (uploadRows.length) {
+      try {
+        await uploadController.triggerUploadByMediaId(mediaId);
+        logger.info(`MEDIA | auto-triggered upload for media:${mediaId}`);
+      } catch (err) {
+        logger.error(`MEDIA | auto-trigger failed for media:${mediaId} | ${err.message}`);
+      }
     }
 
     return res.status(201).json({

@@ -172,13 +172,35 @@ function getDriveCredentials() {
   throw new Error('Google Drive service account is not configured');
 }
 
+function hasDriveOAuthCredentials() {
+  const cfg = config.googleDrive || {};
+  return (
+    !!String(cfg.clientId || '').trim() &&
+    !!String(cfg.clientSecret || '').trim() &&
+    !!String(cfg.refreshToken || '').trim()
+  );
+}
+
+function getDriveOAuthClient() {
+  const cfg = config.googleDrive || {};
+  const auth = new google.auth.OAuth2(
+    cfg.clientId,
+    cfg.clientSecret,
+    cfg.redirectUri || 'https://developers.google.com/oauthplayground'
+  );
+  auth.setCredentials({ refresh_token: cfg.refreshToken });
+  return auth;
+}
+
 async function getDirectDriveClient() {
   if (directDriveClient) return directDriveClient;
 
-  const auth = new google.auth.GoogleAuth({
-    credentials: getDriveCredentials(),
-    scopes: ['https://www.googleapis.com/auth/drive'],
-  });
+  const auth = hasDriveOAuthCredentials()
+    ? getDriveOAuthClient()
+    : new google.auth.GoogleAuth({
+        credentials: getDriveCredentials(),
+        scopes: ['https://www.googleapis.com/auth/drive'],
+      });
 
   directDriveClient = google.drive({ version: 'v3', auth });
   logger.warn('DRIVE | using direct media_controller fallback uploader');

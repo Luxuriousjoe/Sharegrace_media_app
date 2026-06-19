@@ -10,11 +10,18 @@ let driveAuth = null;
 
 function isConfigured() {
   const cfg = config.googleDrive || {};
+  const hasOAuthCredentials =
+    !!String(cfg.clientId || '').trim() &&
+    !!String(cfg.clientSecret || '').trim() &&
+    !!String(cfg.refreshToken || '').trim();
+  const hasServiceAccountCredentials =
+    !!String(cfg.serviceAccountJson || '').trim() ||
+    !!String(cfg.serviceAccountPath || '').trim();
+
   return (
     cfg.enabled &&
     !!getDefaultFolderId() &&
-    (!!String(cfg.serviceAccountJson || '').trim() ||
-      !!String(cfg.serviceAccountPath || '').trim())
+    (hasOAuthCredentials || hasServiceAccountCredentials)
   );
 }
 
@@ -52,6 +59,27 @@ function getCredentials() {
   throw new Error('Google Drive service account is not configured');
 }
 
+function hasOAuthCredentials() {
+  const cfg = config.googleDrive || {};
+  return (
+    !!String(cfg.clientId || '').trim() &&
+    !!String(cfg.clientSecret || '').trim() &&
+    !!String(cfg.refreshToken || '').trim()
+  );
+}
+
+function getOAuth2Client() {
+  const cfg = config.googleDrive || {};
+  const auth = new google.auth.OAuth2(
+    cfg.clientId,
+    cfg.clientSecret,
+    cfg.redirectUri || 'https://developers.google.com/oauthplayground'
+  );
+
+  auth.setCredentials({ refresh_token: cfg.refreshToken });
+  return auth;
+}
+
 async function getDriveClient() {
   if (driveClient) return driveClient;
 
@@ -59,13 +87,17 @@ async function getDriveClient() {
     throw new Error('Google Drive storage is not configured');
   }
 
+  if (hasOAuthCredentials()) {
+    driveAuth = getOAuth2Client();
+    driveClient = google.drive({ version: 'v3', auth: driveAuth });
+    logger.startup('Google Drive service initialized with OAuth user credentials');
+    return driveClient;
+  }
+
   const credentials = getCredentials();
-  driveAuth = new google.auth.GoogleAuth({
-    credentials,
-    scopes: SCOPES,
-  });
+  driveAuth = new google.auth.GoogleAuth({ credentials, scopes: SCOPES });
   driveClient = google.drive({ version: 'v3', auth: driveAuth });
-  logger.startup('Google Drive service initialized');
+  logger.startup('Google Drive service initialized with service account credentials');
   return driveClient;
 }
 

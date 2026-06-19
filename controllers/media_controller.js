@@ -156,12 +156,26 @@ async function uploadAssetToDrive({ file, localPath, title, mediaType, label }) 
   const fileName = `${Date.now()}-${baseTitle}${ext}`;
   const mimeType = file?.mimetype || getMimeType(sourcePath);
 
-  const uploaded = await googleDriveService.uploadMediaFile({
-    localPath: sourcePath,
-    fileName,
-    mimeType,
-    mediaType,
-  });
+  let uploaded;
+  if (typeof googleDriveService.uploadMediaFile === 'function') {
+    uploaded = await googleDriveService.uploadMediaFile({
+      localPath: sourcePath,
+      fileName,
+      mimeType,
+      mediaType,
+    });
+  } else if (typeof googleDriveService.uploadFileToDrive === 'function') {
+    uploaded = await googleDriveService.uploadFileToDrive({
+      localPath: sourcePath,
+      fileName,
+      mimeType,
+      folderId: typeof googleDriveService.resolveFolderId === 'function'
+        ? googleDriveService.resolveFolderId(mediaType)
+        : undefined,
+    });
+  } else {
+    throw new Error('Google Drive upload helper is not available on this backend build');
+  }
 
   logger.info(
     `DRIVE | Uploaded ${label || mediaType} to ${mediaType} folder | file:${uploaded.fileId}`,

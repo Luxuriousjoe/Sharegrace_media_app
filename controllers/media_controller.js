@@ -1,5 +1,6 @@
 const fs = require('fs');
 const path = require('path');
+const { google } = require('googleapis');
 const db = require('../config/db_config');
 const config = require('../config/app_config');
 const telegramService = require('../services/telegram_service');
@@ -24,6 +25,7 @@ const CONTENT_TYPES = {
 let uploadsColumnCache = null;
 let mediaMetadataColumnCache = null;
 let mediaColumnCache = null;
+let directDriveClient = null;
 
 async function getUploadsColumns() {
   if (uploadsColumnCache) {
@@ -141,6 +143,98 @@ function cleanDriveFileName(value) {
     .slice(0, 120) || 'share-grace-media';
 }
 
+function getDriveFolderId(mediaType) {
+  const cfg = config.googleDrive || {};
+  const type = String(mediaType || '').toLowerCase();
+  const fallback =
+    cfg.mediaFolderId ||
+    cfg.folderId ||
+    cfg.videoFolderId ||
+    cfg.photoFolderId ||
+    cfg.audioFolderId ||
+    '';
+
+  if (type === 'video') return String(cfg.videoFolderId || fallback).trim();
+  if (type === 'photo') return String(cfg.photoFolderId || fallback).trim();
+  if (type === 'audio') return String(cfg.audioFolderId || fallback).trim();
+  if (type === 'thumbnail') return String(cfg.thumbnailFolderId || fallback).trim();
+  return String(fallback).trim();
+}
+
+function getDriveCredentials() {
+  const cfg = config.googleDrive || {};
+  const json = String(cfg.serviceAccountJson || '').trim();
+  const filePath = String(cfg.serviceAccountPath || '').trim();
+
+  if (json) return JSON.parse(json);
+  if (filePath) return JSON.parse(fs.readFileSync(filePath, 'utf8'));
+
+  throw new Error('Google Drive service account is not configured');
+}
+
+async function getDirectDriveClient() {
+  if (directDriveClient) return directDriveClient;
+
+  const auth = new google.auth.GoogleAuth({
+    credentials: getDriveCredentials(),
+    scopes: ['https://www.googleapis.com/auth/drive'],
+  });
+
+  directDriveClient = google.drive({ version: 'v3', auth });
+  logger.warn('DRIVE | using direct media_controller fallback uploader');
+  return directDriveClient;
+}
+
+function buildDriveDownloadUrl(fileId) {
+  return `https://drive.google.com/uc?export=download&id=${fileId}`;
+}
+
+async function uploadAssetToDriveDirect({ sourcePath, fileName, mimeType, mediaType }) {
+  const folderId = getDriveFolderId(mediaType);
+  if (!folderId) {
+    throw new Error('Google Drive folder id is not configured');
+  }
+
+  const drive = await getDirectDriveClient();
+  const response = await drive.files.create({
+    requestBody: {
+      name: fileName,
+      mimeType,
+      parents: [folderId],
+    },
+    media: {
+      mimeType,
+      body: fs.createReadStream(sourcePath),
+    },
+    fields: 'id,name,size,mimeType,webViewLink',
+    supportsAllDrives: true,
+  });
+
+  const fileId = response.data.id;
+  if (!fileId) {
+    throw new Error('Google Drive upload succeeded but no file id returned');
+  }
+
+  try {
+    await drive.permissions.create({
+      fileId,
+      requestBody: { role: 'reader', type: 'anyone' },
+      supportsAllDrives: true,
+    });
+  } catch (error) {
+    logger.warn(`DRIVE | permission warning for file:${fileId} | ${error.message}`);
+  }
+
+  return {
+    fileId,
+    fileName: response.data.name || fileName,
+    fileSize: response.data.size ? Number(response.data.size) : null,
+    mimeType: response.data.mimeType || mimeType,
+    webViewLink: response.data.webViewLink || null,
+    downloadUrl: buildDriveDownloadUrl(fileId),
+  };
+}
+
 async function uploadAssetToDrive({ file, localPath, title, mediaType, label }) {
   if (!googleDriveService.isConfigured()) {
     return null;
@@ -174,7 +268,12 @@ async function uploadAssetToDrive({ file, localPath, title, mediaType, label }) 
         : undefined,
     });
   } else {
-    throw new Error('Google Drive upload helper is not available on this backend build');
+    uploaded = await uploadAssetToDriveDirect({
+      sourcePath,
+      fileName,
+      mimeType,
+      mediaType,
+    });
   }
 
   logger.info(

@@ -12,10 +12,32 @@ function isConfigured() {
   const cfg = config.googleDrive || {};
   return (
     cfg.enabled &&
-    !!String(cfg.folderId || '').trim() &&
+    !!getDefaultFolderId() &&
     (!!String(cfg.serviceAccountJson || '').trim() ||
       !!String(cfg.serviceAccountPath || '').trim())
   );
+}
+
+function getDefaultFolderId() {
+  const cfg = config.googleDrive || {};
+  return String(
+    cfg.folderId ||
+      cfg.mediaFolderId ||
+      cfg.videoFolderId ||
+      cfg.photoFolderId ||
+      cfg.audioFolderId ||
+      ''
+  ).trim();
+}
+
+function resolveFolderId(mediaType) {
+  const cfg = config.googleDrive || {};
+  const type = String(mediaType || '').toLowerCase();
+  if (type === 'video') return String(cfg.videoFolderId || getDefaultFolderId()).trim();
+  if (type === 'photo') return String(cfg.photoFolderId || getDefaultFolderId()).trim();
+  if (type === 'audio') return String(cfg.audioFolderId || getDefaultFolderId()).trim();
+  if (type === 'thumbnail') return String(cfg.thumbnailFolderId || getDefaultFolderId()).trim();
+  return getDefaultFolderId();
 }
 
 function getCredentials() {
@@ -51,16 +73,65 @@ function publicDownloadUrl(fileId) {
   return `https://drive.google.com/uc?export=download&id=${fileId}`;
 }
 
+function parseRangeHeader(rangeHeader, size) {
+  if (!rangeHeader || !size) return null;
+
+  const match = String(rangeHeader).match(/^bytes=(\d*)-(\d*)$/);
+  if (!match) return null;
+
+  const startText = match[1];
+  const endText = match[2];
+  const start = startText ? Number.parseInt(startText, 10) : 0;
+  const end = endText ? Number.parseInt(endText, 10) : size - 1;
+
+  if (
+    Number.isNaN(start) ||
+    Number.isNaN(end) ||
+    start < 0 ||
+    end < start ||
+    start >= size
+  ) {
+    return { invalid: true };
+  }
+
+  return {
+    start,
+    end: Math.min(end, size - 1),
+  };
+}
+
 async function uploadAppReleaseFile({ localPath, fileName, mimeType = 'application/vnd.android.package-archive' }) {
+  return uploadFileToDrive({
+    localPath,
+    fileName,
+    mimeType,
+    folderId: String(config.googleDrive.folderId || getDefaultFolderId()).trim(),
+  });
+}
+
+async function uploadMediaFile({ localPath, fileName, mimeType = 'application/octet-stream', mediaType }) {
+  return uploadFileToDrive({
+    localPath,
+    fileName,
+    mimeType,
+    folderId: resolveFolderId(mediaType),
+  });
+}
+
+async function uploadFileToDrive({ localPath, fileName, mimeType = 'application/octet-stream', folderId }) {
   const drive = await getDriveClient();
-  const folderId = String(config.googleDrive.folderId).trim();
+  const resolvedFolderId = String(folderId || getDefaultFolderId()).trim();
   const resolvedName = fileName || path.basename(localPath);
+
+  if (!resolvedFolderId) {
+    throw new Error('Google Drive folder id is not configured');
+  }
 
   const createRes = await drive.files.create({
     requestBody: {
       name: resolvedName,
       mimeType,
-      parents: [folderId],
+      parents: [resolvedFolderId],
     },
     media: {
       mimeType,
@@ -98,7 +169,13 @@ async function uploadAppReleaseFile({ localPath, fileName, mimeType = 'applicati
   };
 }
 
-async function streamFileToResponse({ fileId, res, wantsDownload = true, fileName = 'app-release.apk' }) {
+async function streamFileToResponse({
+  fileId,
+  res,
+  wantsDownload = true,
+  fileName = 'app-release.apk',
+  rangeHeader,
+}) {
   const drive = await getDriveClient();
 
   let metadata;
@@ -113,21 +190,42 @@ async function streamFileToResponse({ fileId, res, wantsDownload = true, fileNam
     metadata = {};
   }
 
+  const resolvedName = metadata?.name || fileName;
+  const mimeType = metadata?.mimeType || 'application/octet-stream';
+  const size = metadata?.size ? Number(metadata.size) : null;
+  const range = parseRangeHeader(rangeHeader, size);
+
+  if (range?.invalid) {
+    res.status(416);
+    if (size) res.setHeader('Content-Range', `bytes */${size}`);
+    return res.end();
+  }
+
+  const requestOptions = { responseType: 'stream' };
+  if (range) {
+    requestOptions.headers = {
+      Range: `bytes=${range.start}-${range.end}`,
+    };
+  }
+
   const response = await drive.files.get(
     {
       fileId,
       alt: 'media',
       supportsAllDrives: true,
     },
-    { responseType: 'stream' }
+    requestOptions
   );
 
-  const resolvedName = metadata?.name || fileName;
-  const mimeType = metadata?.mimeType || 'application/octet-stream';
-  const size = metadata?.size || null;
-
   res.setHeader('Content-Type', mimeType);
-  if (size) res.setHeader('Content-Length', size);
+  res.setHeader('Accept-Ranges', 'bytes');
+  if (range && size) {
+    res.status(206);
+    res.setHeader('Content-Range', `bytes ${range.start}-${range.end}/${size}`);
+    res.setHeader('Content-Length', range.end - range.start + 1);
+  } else if (size) {
+    res.setHeader('Content-Length', size);
+  }
   res.setHeader(
     'Content-Disposition',
     `${wantsDownload ? 'attachment' : 'inline'}; filename="${resolvedName}"`
@@ -145,6 +243,11 @@ async function streamFileToResponse({ fileId, res, wantsDownload = true, fileNam
 module.exports = {
   isConfigured,
   publicDownloadUrl,
+  resolveFolderId,
+  uploadFile: uploadFileToDrive,
+  uploadFileToDrive,
+  uploadMedia: uploadMediaFile,
   uploadAppReleaseFile,
+  uploadMediaFile,
   streamFileToResponse,
 };
